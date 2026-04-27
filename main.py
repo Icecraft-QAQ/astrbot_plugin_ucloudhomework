@@ -208,12 +208,12 @@ def build_homework_message(homework_list: list) -> str:
     if not homework_list:
         return "没有未完成的作业！"
 
-    # 调试：打印首条作业的全部字段，便于定位课程名字段
+    # 调试：将首条作业的全部字段直接输出到消息中
+    debug_line = ""
     if homework_list:
-        logger.info(f"UCloud 作业首条数据字段: {list(homework_list[0].keys())}")
-        logger.debug(f"UCloud 作业首条数据: {homework_list[0]}")
+        debug_line = f"\n[DEBUG] 首条字段: {list(homework_list[0].keys())}\n[DEBUG] 首条数据: {homework_list[0]}\n"
 
-    lines = [f"未完成作业 ({len(homework_list)} 项)\n"]
+    lines = [f"未完成作业 ({len(homework_list)} 项){debug_line}"]
 
     for i, h in enumerate(homework_list, 1):
         course = _get_course_name(h)
