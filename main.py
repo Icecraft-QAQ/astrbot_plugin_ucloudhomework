@@ -5,6 +5,7 @@
 参考 ucloud_homework_v2.py 的认证与 API 逻辑，改为异步实现。
 """
 
+import random
 import re
 from datetime import datetime
 from urllib.parse import quote
@@ -194,10 +195,14 @@ def format_remaining(end_time_str: str) -> str:
         return "未知"
 
 
-def build_homework_message(homework_list: list) -> str:
-    """将作业列表格式化为可读文本"""
+def build_homework_message(homework_list: list) -> tuple[str, int]:
+    """将作业列表格式化为可读文本
+
+    Returns:
+        (格式化文本, 待完成未截止作业数)
+    """
     if not homework_list:
-        return "没有未完成的作业！"
+        return "没有未完成的作业！", 0
 
     pending = []
     overdue = []
@@ -235,7 +240,7 @@ def build_homework_message(homework_list: list) -> str:
             lines.append(f"{idx}. {title} (已截止)")
             idx += 1
 
-    return "\n".join(lines)
+    return "\n".join(lines), len(pending)
 
 
 # ──────────────────── 插件 ────────────────────
@@ -279,6 +284,11 @@ class Main(Star):
             except Exception:
                 pass
 
+    # ── 配置 ──
+
+    ROAST_THRESHOLD: int = 10  # 待完成作业数超过此值则概率吐槽
+    ROAST_CHANCE: float = 0.65  # 超过阈值时吐槽概率
+
     # ── 指令 ──
 
     @filter.command("homework")
@@ -296,8 +306,15 @@ class Main(Star):
                 access_token, user_id = await cas_login(client, username, password)
                 homework_list = await get_undone_homework(client, access_token, user_id)
 
-            msg = build_homework_message(homework_list)
+            msg, pending_count = build_homework_message(homework_list)
             yield event.plain_result(msg)
+
+            # 生成一句鼓励/吐槽
+            if pending_count > 0:
+                try:
+                    await self._send_comment(event, pending_count)
+                except Exception as e:
+                    logger.warning(f"生成作业评语失败: {e}")
 
         except RuntimeError as e:
             logger.error(f"UCloud 作业查询失败: {e}")
@@ -305,6 +322,34 @@ class Main(Star):
         except Exception as e:
             logger.error(f"UCloud 作业查询异常: {e}")
             yield event.plain_result(f"查询出错: {e}")
+
+    async def _send_comment(self, event: AstrMessageEvent, pending_count: int) -> None:
+        """根据作业数量调用 LLM 生成一句鼓励或吐槽"""
+        should_roast = pending_count >= self.ROAST_THRESHOLD and random.random() < self.ROAST_CHANCE
+
+        if should_roast:
+            tone = (
+                "用嘲讽、吐槽的语气对用户还有这么多作业没完成发表一句简短评论，"
+                "要辛辣毒舌但不过分伤人，像个损友说的那种话。"
+            )
+        else:
+            tone = "用温暖鼓励的语气给用户加油打气，说一句简短的话，让人觉得还有希望。"
+
+        prompt = (
+            f"用户查询了未完成作业，还有 {pending_count} 项待完成。{tone}"
+            "只用一两句话回答，不要加引号、不要用markdown格式，直接说出你的话。"
+        )
+
+        umo = event.unified_msg_origin
+        provider_id = self.context.get_current_chat_provider_id(umo)
+        llm_resp = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+        )
+        comment = llm_resp.completion_text.strip() if llm_resp and llm_resp.completion_text else ""
+        if comment:
+            message_chain = MessageChain().message(comment)
+            await self.context.send_message(event.unified_msg_origin, message_chain)
 
     # ── 定时推送 ──
 
@@ -326,7 +371,7 @@ class Main(Star):
                 access_token, user_id = await cas_login(client, username, password)
                 homework_list = await get_undone_homework(client, access_token, user_id)
 
-            msg = build_homework_message(homework_list)
+            msg, _ = build_homework_message(homework_list)
             message_chain = MessageChain().message(msg)
             await self.context.send_message(session, message_chain)
             logger.info("UCloud 作业定时推送成功")
