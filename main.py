@@ -21,6 +21,7 @@ CAS_LOGIN_URL = "https://auth.bupt.edu.cn/authserver/login"
 Ucloud_SERVICE = "https://ucloud.bupt.edu.cn"
 OAUTH_TOKEN_URL = "https://apiucloud.bupt.edu.cn/ykt-basics/oauth/token"
 UNDONE_API_URL = "https://apiucloud.bupt.edu.cn/ykt-site/site/student/undone"
+SITES_API_URL = "https://apiucloud.bupt.edu.cn/ykt-site/site/student/sites"
 
 BASIC_AUTH = "Basic cG9ydGFsOnBvcnRhbF9zZWNyZXQ="  # portal:portal_secret
 
@@ -170,6 +171,34 @@ async def get_undone_homework(client: httpx.AsyncClient, access_token: str, user
     return result.get("data", {}).get("undoneList", [])
 
 
+async def get_sites(client: httpx.AsyncClient, access_token: str, user_id: str) -> dict:
+    """获取课程站点列表，返回 siteId -> siteName 映射"""
+    resp = await client.get(
+        SITES_API_URL,
+        params={"userId": user_id},
+        headers={
+            "Authorization": BASIC_AUTH,
+            "Blade-Auth": access_token,
+            "tenant-id": "000000",
+            "Referer": "https://ucloud.bupt.edu.cn/",
+            "User-Agent": UA,
+            "Accept": "application/json, text/plain, */*",
+        },
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"课程列表查询失败 (HTTP {resp.status_code}): {resp.text[:200]}")
+
+    result = resp.json()
+    sites = result.get("data", [])
+    mapping = {}
+    for site in sites:
+        sid = site.get("siteId") or site.get("id")
+        name = site.get("siteName") or site.get("name") or site.get("title") or ""
+        if sid is not None:
+            mapping[sid] = name
+    return mapping
+
+
 def format_remaining(end_time_str: str) -> str:
     """计算剩余时间并格式化"""
     try:
@@ -194,29 +223,40 @@ def format_remaining(end_time_str: str) -> str:
         return "未知"
 
 
-def _get_course_name(h: dict) -> str:
-    """从作业条目中提取课程名称，兼容多种字段名"""
-    for key in ("siteName", "siteFullName", "courseName", "className", "siteTitle"):
-        val = h.get(key, "")
-        if val:
-            return val
-    return "未知课程"
+def build_homework_message(homework_list: list, site_map: dict | None = None) -> str:
+    """将作业列表格式化为可读文本
 
-
-def build_homework_message(homework_list: list) -> str:
-    """将作业列表格式化为可读文本"""
+    Args:
+        homework_list: undone API 返回的作业列表
+        site_map: siteId -> siteName 的映射，由 get_sites() 生成
+    """
     if not homework_list:
         return "没有未完成的作业！"
 
-    # 调试：将首条作业的全部字段直接输出到消息中
+    # 调试：输出 site_map 和首条作业的 siteId
     debug_line = ""
+    if site_map:
+        debug_line += f"\n[DEBUG] site_map 前3条: {dict(list(site_map.items())[:3])}"
     if homework_list:
-        debug_line = f"\n[DEBUG] 首条字段: {list(homework_list[0].keys())}\n[DEBUG] 首条数据: {homework_list[0]}\n"
+        debug_line += f"\n[DEBUG] 首条 siteId: {homework_list[0].get('siteId')}"
+        # 统计各 siteId 出现次数
+        from collections import Counter
+        id_counts = Counter(h.get("siteId") for h in homework_list)
+        debug_line += f"\n[DEBUG] siteId 分布: {dict(id_counts)}\n"
 
-    lines = [f"未完成作业 ({len(homework_list)} 项){debug_line}"]
+    lines = [f"未完成作业 ({len(homework_list)} 项){debug_line}\n"]
 
     for i, h in enumerate(homework_list, 1):
-        course = _get_course_name(h)
+        # 优先用 siteId 从映射中找课程名，否则尝试作业条目自带的 siteName
+        site_id = h.get("siteId")
+        course = ""
+        if site_map and site_id in site_map:
+            course = site_map[site_id]
+        if not course:
+            course = h.get("siteName", "")
+        if not course:
+            course = "未知课程"
+
         title = h.get("activityName", "未知作业")
         deadline = h.get("endTime", "未知")
         remain = format_remaining(deadline)
@@ -287,8 +327,9 @@ class Main(Star):
             async with httpx.AsyncClient(verify=True, timeout=30) as client:
                 access_token, user_id = await cas_login(client, username, password)
                 homework_list = await get_undone_homework(client, access_token, user_id)
+                site_map = await get_sites(client, access_token, user_id)
 
-            msg = build_homework_message(homework_list)
+            msg = build_homework_message(homework_list, site_map)
             yield event.plain_result(msg)
 
         except RuntimeError as e:
@@ -317,8 +358,9 @@ class Main(Star):
             async with httpx.AsyncClient(verify=True, timeout=30) as client:
                 access_token, user_id = await cas_login(client, username, password)
                 homework_list = await get_undone_homework(client, access_token, user_id)
+                site_map = await get_sites(client, access_token, user_id)
 
-            msg = build_homework_message(homework_list)
+            msg = build_homework_message(homework_list, site_map)
             message_chain = MessageChain().message(msg)
             await self.context.send_message(session, message_chain)
             logger.info("UCloud 作业定时推送成功")
