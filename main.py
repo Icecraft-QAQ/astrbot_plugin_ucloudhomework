@@ -21,7 +21,6 @@ CAS_LOGIN_URL = "https://auth.bupt.edu.cn/authserver/login"
 Ucloud_SERVICE = "https://ucloud.bupt.edu.cn"
 OAUTH_TOKEN_URL = "https://apiucloud.bupt.edu.cn/ykt-basics/oauth/token"
 UNDONE_API_URL = "https://apiucloud.bupt.edu.cn/ykt-site/site/student/undone"
-DETAIL_API_URL = "https://apiucloud.bupt.edu.cn/ykt-site/work/detail"
 
 BASIC_AUTH = "Basic cG9ydGFsOnBvcnRhbF9zZWNyZXQ="  # portal:portal_secret
 
@@ -171,44 +170,6 @@ async def get_undone_homework(client: httpx.AsyncClient, access_token: str, user
     return result.get("data", {}).get("undoneList", [])
 
 
-async def get_class_names(
-    client: httpx.AsyncClient, access_token: str, homework_list: list
-) -> dict[str, str]:
-    """批量获取作业详情中的课程名，返回 activityId -> className 映射"""
-    import asyncio
-
-    mapping: dict[str, str] = {}
-
-    async def _fetch_one(activity_id: str) -> tuple[str, str]:
-        try:
-            resp = await client.get(
-                DETAIL_API_URL,
-                params={"assignmentId": activity_id},
-                headers={
-                    "Authorization": BASIC_AUTH,
-                    "Blade-Auth": access_token,
-                    "tenant-id": "000000",
-                    "Referer": "https://ucloud.bupt.edu.cn/",
-                    "User-Agent": UA,
-                    "Accept": "application/json, text/plain, */*",
-                },
-            )
-            if resp.status_code == 200:
-                data = resp.json().get("data", {})
-                return activity_id, data.get("className", "")
-        except Exception:
-            pass
-        return activity_id, ""
-
-    tasks = [_fetch_one(h.get("activityId", "")) for h in homework_list if h.get("activityId")]
-    results = await asyncio.gather(*tasks)
-    for aid, name in results:
-        if name:
-            mapping[aid] = name
-
-    return mapping
-
-
 def format_remaining(end_time_str: str) -> str:
     """计算剩余时间并格式化"""
     try:
@@ -233,29 +194,14 @@ def format_remaining(end_time_str: str) -> str:
         return "未知"
 
 
-def build_homework_message(homework_list: list, class_map: dict | None = None) -> str:
-    """将作业列表格式化为可读文本
-
-    Args:
-        homework_list: undone API 返回的作业列表
-        class_map: activityId -> className 的映射，由 get_class_names() 生成
-    """
+def build_homework_message(homework_list: list) -> str:
+    """将作业列表格式化为可读文本"""
     if not homework_list:
         return "没有未完成的作业！"
 
     lines = [f"未完成作业 ({len(homework_list)} 项)\n"]
 
     for i, h in enumerate(homework_list, 1):
-        # 优先通过 detail API 获取的 className，否则尝试作业条目自带的 siteName
-        activity_id = h.get("activityId", "")
-        course = ""
-        if class_map and activity_id in class_map:
-            course = class_map[activity_id]
-        if not course:
-            course = h.get("siteName", "")
-        if not course:
-            course = "未知课程"
-
         title = h.get("activityName", "未知作业")
         deadline = h.get("endTime", "未知")
         remain = format_remaining(deadline)
@@ -263,7 +209,7 @@ def build_homework_message(homework_list: list, class_map: dict | None = None) -
         if remain == "已截止":
             remain = "⚠已截止"
 
-        lines.append(f"{i}. [{course}] {title}")
+        lines.append(f"{i}. {title}")
         lines.append(f"   截止: {deadline} (剩余 {remain})")
 
     return "\n".join(lines)
@@ -326,9 +272,8 @@ class Main(Star):
             async with httpx.AsyncClient(verify=True, timeout=30) as client:
                 access_token, user_id = await cas_login(client, username, password)
                 homework_list = await get_undone_homework(client, access_token, user_id)
-                class_map = await get_class_names(client, access_token, homework_list)
 
-            msg = build_homework_message(homework_list, class_map)
+            msg = build_homework_message(homework_list)
             yield event.plain_result(msg)
 
         except RuntimeError as e:
@@ -357,9 +302,8 @@ class Main(Star):
             async with httpx.AsyncClient(verify=True, timeout=30) as client:
                 access_token, user_id = await cas_login(client, username, password)
                 homework_list = await get_undone_homework(client, access_token, user_id)
-                class_map = await get_class_names(client, access_token, homework_list)
 
-            msg = build_homework_message(homework_list, class_map)
+            msg = build_homework_message(homework_list)
             message_chain = MessageChain().message(msg)
             await self.context.send_message(session, message_chain)
             logger.info("UCloud 作业定时推送成功")
