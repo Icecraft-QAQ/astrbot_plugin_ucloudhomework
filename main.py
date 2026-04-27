@@ -199,18 +199,41 @@ def build_homework_message(homework_list: list) -> str:
     if not homework_list:
         return "没有未完成的作业！"
 
-    lines = [f"未完成作业 ({len(homework_list)} 项)\n"]
+    pending = []
+    overdue = []
+    for h in homework_list:
+        end_time_str = h.get("endTime", "")
+        try:
+            end_dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
+            is_overdue = end_dt <= datetime.now()
+        except (ValueError, TypeError):
+            is_overdue = False
+        if is_overdue:
+            overdue.append(h)
+        else:
+            pending.append(h)
 
-    for i, h in enumerate(homework_list, 1):
-        title = h.get("activityName", "未知作业")
-        deadline = h.get("endTime", "未知")
-        remain = format_remaining(deadline)
+    # 未截止按截止时间升序（最紧急的排前面）
+    pending.sort(key=lambda h: h.get("endTime", ""))
 
-        if remain == "已截止":
-            remain = "⚠已截止"
+    lines = [f"未完成作业: 共 {len(homework_list)} 项 | 待完成 {len(pending)} 项 | 已截止 {len(overdue)} 项\n"]
 
-        lines.append(f"{i}. {title}")
-        lines.append(f"   截止: {deadline} (剩余 {remain})")
+    idx = 1
+    if pending:
+        for h in pending:
+            title = h.get("activityName", "未知作业")
+            deadline = h.get("endTime", "未知")
+            remain = format_remaining(deadline)
+            lines.append(f"{idx}. {title}")
+            lines.append(f"   截止: {deadline} (剩余 {remain})")
+            idx += 1
+
+    if overdue:
+        lines.append("")
+        for h in overdue:
+            title = h.get("activityName", "未知作业")
+            lines.append(f"{idx}. {title} (已截止)")
+            idx += 1
 
     return "\n".join(lines)
 
