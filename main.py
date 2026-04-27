@@ -194,15 +194,29 @@ def format_remaining(end_time_str: str) -> str:
         return "未知"
 
 
+def _get_course_name(h: dict) -> str:
+    """从作业条目中提取课程名称，兼容多种字段名"""
+    for key in ("siteName", "siteFullName", "courseName", "className", "siteTitle"):
+        val = h.get(key, "")
+        if val:
+            return val
+    return "未知课程"
+
+
 def build_homework_message(homework_list: list) -> str:
     """将作业列表格式化为可读文本"""
     if not homework_list:
         return "没有未完成的作业！"
 
+    # 调试：打印首条作业的全部字段，便于定位课程名字段
+    if homework_list:
+        logger.info(f"UCloud 作业首条数据字段: {list(homework_list[0].keys())}")
+        logger.debug(f"UCloud 作业首条数据: {homework_list[0]}")
+
     lines = [f"未完成作业 ({len(homework_list)} 项)\n"]
 
     for i, h in enumerate(homework_list, 1):
-        course = h.get("siteName", "未知课程")
+        course = _get_course_name(h)
         title = h.get("activityName", "未知作业")
         deadline = h.get("endTime", "未知")
         remain = format_remaining(deadline)
