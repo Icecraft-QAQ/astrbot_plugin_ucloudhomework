@@ -341,7 +341,7 @@ class Main(Star):
         )
 
         umo = event.unified_msg_origin
-        provider_id = self.context.get_current_chat_provider_id(umo)
+        provider_id = await self.context.get_current_chat_provider_id(umo)
         llm_resp = await self.context.llm_generate(
             chat_provider_id=provider_id,
             prompt=prompt,
