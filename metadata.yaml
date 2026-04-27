@@ -1,0 +1,7 @@
+name: astrbot_plugin_ucloud_homework
+desc: 查询北邮 UCloud 未完成作业并定时/指令推送
+author: 冰块不溶于苯
+version: 1.0.0
+license: MIT
+support_platforms:
+  - aiocqhttp

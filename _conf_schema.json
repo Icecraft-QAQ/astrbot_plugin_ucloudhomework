@@ -1,0 +1,25 @@
+{
+  "username": {
+    "description": "北邮统一身份认证学号",
+    "type": "string",
+    "hint": "用于登录北邮 CAS 认证系统"
+  },
+  "password": {
+    "description": "北邮统一身份认证密码",
+    "type": "string",
+    "hint": "密码将被保存在本地配置中",
+    "obvious_hint": true
+  },
+  "cron_expression": {
+    "description": "定时推送的 Cron 表达式",
+    "type": "string",
+    "hint": "格式为标准 Cron：分 时 日 月 周。例如 0 8 * * * 表示每天 8:00 推送。留空则不启用定时推送",
+    "default": ""
+  },
+  "push_session": {
+    "description": "定时推送的会话 ID",
+    "type": "string",
+    "hint": "格式如 aiocqhttp:GroupMessage:123456。可通过 /sid 指令获取。留空则不启用定时推送",
+    "default": ""
+  }
+}
